@@ -1,0 +1,339 @@
+openapi: 3.1.0
+info:
+  title: WuloPay Hosted Checkout API
+  version: 1.0.0
+  summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
+  description: |
+    1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
+       your server only: never put the key or secret in a web page or a mobile app.
+    2. Create a checkout session for each order (`POST /Checkout/Sessions`) and send the shopper to its `url`.
+    3. The shopper pays on WuloPay's page (card details and 3-D Secure are handled there) and returns to your
+       `returnUrl` with `?session_id=…&status=…`.
+    4. Confirm the payment from the `checkout.session.completed` webhook or `GET /Checkout/Sessions/{id}`.
+       Never treat the redirect alone as proof of payment.
+
+    Amounts are in currency units (149.99 means R149.99). Errors are `{"error": "..."}` with the HTTP status.
+  contact:
+    name: WuloPay developer support
+    url: https://www.wulopay.com
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://sandbox.wulopay.com/api/v1
+    description: Sandbox (test cards, no real money)
+security:
+  - bearerAuth: []
+tags:
+  - name: Authentication
+    description: Exchange an API key and secret for a short-lived bearer token.
+  - name: Checkout sessions
+    description: One session per order; the shopper pays on its url.
+  - name: Refunds
+    description: Full or partial refunds of paid sessions.
+paths:
+  /Authorization/Token/ApiToken:
+    post:
+      tags: [Authentication]
+      summary: Get an access token
+      description: |
+        Tokens last `expiresIn` seconds (60 minutes). Cache and reuse them: this endpoint is rate limited per IP
+        address (20 requests a minute) and repeated failures lock the key for a while (HTTP 429 with Retry-After).
+      operationId: createApiToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, secret]
+              properties:
+                key: { type: string, description: 'API key id (starts with "wk_")', example: wk_0123456789abcdef }
+                secret: { type: string, format: password }
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authToken: { type: string, description: Bearer token for the other endpoints }
+                  expiresIn: { type: integer, description: Seconds until the token expires, example: 3600 }
+                  refreshToken: { type: ['string', 'null'], description: Always null for API keys; request a new token instead }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /Checkout/Sessions:
+    post:
+      tags: [Checkout sessions]
+      summary: Create a checkout session
+      description: Needs scope `checkout.sessions.create`. Send an `Idempotency-Key` to make retries safe.
+      operationId: createCheckoutSession
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Up to 100 characters. Repeating a request with the same key returns the same session; reusing it for a different amount or reference returns 409.
+          schema: { type: string, maxLength: 100 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCheckoutSession' }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutSession' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Checkout/Sessions/{id}:
+    get:
+      tags: [Checkout sessions]
+      summary: Get a checkout session
+      description: Needs scope `checkout.sessions.read`.
+      operationId: getCheckoutSession
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      responses:
+        '200':
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutSession' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Checkout/Sessions/{id}/Cancel:
+    post:
+      tags: [Checkout sessions]
+      summary: Cancel an open session
+      description: Needs scope `checkout.sessions.create`. Cancelling twice is fine; a session that is paid, processing or expired returns 409.
+      operationId: cancelCheckoutSession
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      responses:
+        '200':
+          description: The cancelled session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutSession' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Checkout/Sessions/{id}/Refunds:
+    post:
+      tags: [Refunds]
+      summary: Refund a paid session
+      description: Needs scope `checkout.refunds.create`. Leave `amount` out to refund everything still refundable.
+      operationId: refundCheckoutSession
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: number, minimum: 0.01, multipleOf: 0.01, example: 20.00 }
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Refund accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+webhooks:
+  checkout.session.completed:
+    post:
+      operationId: onCheckoutSessionCompleted
+      summary: A session was paid
+      description: '`data.object` is the session (without customer details). Mark the order paid here.'
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  checkout.session.expired:
+    post:
+      operationId: onCheckoutSessionExpired
+      summary: A session expired unpaid
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionEvent' }
+      responses: { '200': { description: Acknowledged } }
+  checkout.session.payment_failed:
+    post:
+      operationId: onCheckoutSessionPaymentFailed
+      summary: A payment attempt failed (the session stays open for another try)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionEvent' }
+      responses: { '200': { description: Acknowledged } }
+  refund.succeeded:
+    post:
+      operationId: onRefundSucceeded
+      summary: A refund went through
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/RefundEvent' }
+      responses: { '200': { description: Acknowledged } }
+  refund.failed:
+    post:
+      operationId: onRefundFailed
+      summary: A refund was refused
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/RefundEvent' }
+      responses: { '200': { description: Acknowledged } }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: The `authToken` from `POST /Authorization/Token/ApiToken`.
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^cs_[0-9A-Za-z]{22}$', example: cs_7CRIaOqGBtDY1J7ARiDLS7 }
+    Signature:
+      name: WuloPay-Signature
+      in: header
+      required: true
+      description: |
+        `t=<unix seconds>,v1=<hex HMAC-SHA256>` where the HMAC key is the endpoint's signing secret and the message
+        is `"<t>.<raw request body>"`. Compare with a constant-time function and reject timestamps more than
+        5 minutes old.
+      schema: { type: string, example: 't=1761586200,v1=5f0c8e…' }
+    EventId:
+      name: WuloPay-Event-Id
+      in: header
+      required: true
+      description: Same as the body's `id`. Ignore an id you have already processed (deliveries can repeat).
+      schema: { type: string, example: evt_1gQ2gPKgNNGlkhpdiBtdRR }
+    EventType:
+      name: WuloPay-Event-Type
+      in: header
+      required: true
+      schema: { type: string, example: checkout.session.completed }
+  requestBodies:
+    SessionEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object: { $ref: '#/components/schemas/CheckoutSession' }
+    RefundEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object:
+                        type: object
+                        properties:
+                          sessionId: { type: string }
+                          reference: { type: string }
+                          amount: { type: ['number', 'null'] }
+                          currency: { type: string }
+                          totalRefunded: { type: number }
+                          remainingRefundable: { type: number }
+                          reason: { type: ['string', 'null'] }
+                          error: { type: ['string', 'null'], description: refund.failed only }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: Amount can have at most 2 decimals. }
+  schemas:
+    CreateCheckoutSession:
+      type: object
+      required: [amount, currency, reference, returnUrl]
+      properties:
+        amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 149.99 }
+        currency: { type: string, enum: [ZAR] }
+        reference: { type: string, maxLength: 64, description: Your order id, example: '1042' }
+        description: { type: string, maxLength: 120, example: Order 1042 from Example Shop }
+        customer:
+          type: object
+          properties:
+            email: { type: string, format: email, maxLength: 254 }
+            name: { type: string, maxLength: 120 }
+        returnUrl:
+          type: string
+          maxLength: 1000
+          description: https URL or an app deep link (myapp://…). `http://localhost` is accepted in sandbox only.
+          example: https://shop.example.co.za/checkout/return
+        cancelUrl: { type: string, maxLength: 1000, description: Where "Cancel" goes. Defaults to returnUrl. }
+        metadata:
+          type: object
+          maxProperties: 20
+          additionalProperties: { type: string, maxLength: 500 }
+          description: Your own values (keys up to 40 characters), returned as given in responses and webhooks.
+        expiresInMinutes: { type: integer, minimum: 5, maximum: 1440, default: 60 }
+    CheckoutSession:
+      type: object
+      properties:
+        id: { type: string, example: cs_7CRIaOqGBtDY1J7ARiDLS7 }
+        object: { type: string, const: checkout.session }
+        environment: { type: string, enum: [sandbox, live] }
+        url: { type: ['string', 'null'], description: 'The payment page; null once the session is paid, expired or cancelled' }
+        status: { type: string, enum: [open, processing, paid, expired, cancelled] }
+        reference: { type: string }
+        description: { type: ['string', 'null'] }
+        amount: { type: number }
+        currency: { type: string }
+        customer:
+          type: ['object', 'null']
+          description: API responses only, never in webhooks.
+          properties:
+            email: { type: ['string', 'null'] }
+            name: { type: ['string', 'null'] }
+        returnUrl: { type: string }
+        cancelUrl: { type: string }
+        metadata: { type: object, additionalProperties: { type: string } }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        paidAt: { type: ['string', 'null'], format: date-time }
+        payment:
+          type: ['object', 'null']
+          properties:
+            reference: { type: string, description: The payment's reference (the session id) }
+            amount: { type: number }
+            cardBrand: { type: ['string', 'null'], example: Visa }
+            last4: { type: ['string', 'null'], example: '2701' }
+            paidAt: { type: string, format: date-time }
+        refundedAmount: { type: number }
+        lastPaymentError: { type: ['string', 'null'], description: Why the last attempt failed; the shopper may try again until the session expires }
+        paymentAttempts: { type: integer, description: Failed attempts so far (5 locks the session) }
+    Refund:
+      type: object
+      properties:
+        sessionId: { type: string }
+        refundedThisTime: { type: number }
+        totalRefunded: { type: number }
+        remainingRefundable: { type: number }
+    EventEnvelope:
+      type: object
+      required: [id, type, createdAt, environment, data]
+      properties:
+        id: { type: string, example: evt_1gQ2gPKgNNGlkhpdiBtdRR }
+        type: { type: string, enum: [checkout.session.completed, checkout.session.expired, checkout.session.payment_failed, refund.succeeded, refund.failed, webhook.test] }
+        createdAt: { type: string, format: date-time }
+        environment: { type: string, enum: [sandbox, live] }
+        data: { type: object }
