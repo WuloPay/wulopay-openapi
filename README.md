@@ -4,8 +4,24 @@ OpenAPI 3.1 description of the WuloPay **Hosted Checkout API**: create a checkou
 shopper to WuloPay's secure payment page, and get told by a signed webhook when it is paid.
 
 - Spec: [`openapi.yaml`](openapi.yaml) (view it in any OpenAPI tool, e.g. `npx @redocly/cli preview-docs openapi.yaml`)
-- Libraries and plugins built on it: [wulopay-php](https://github.com/WuloPay/wulopay-php),
-  [wulopay-woocommerce](https://github.com/WuloPay/wulopay-woocommerce)
+- Libraries and plugins built on it (see [Install](#install)).
+
+## Install
+
+| Platform | Install | Repository |
+|---|---|---|
+| WooCommerce | Upload `wulopay-woocommerce.zip` from the [latest release](https://github.com/WuloPay/wulopay-woocommerce/releases/latest) | [wulopay-woocommerce](https://github.com/WuloPay/wulopay-woocommerce) |
+| PHP | `composer require wulopay/wulopay-php` ([Packagist](https://packagist.org/packages/wulopay/wulopay-php)) | [wulopay-php](https://github.com/WuloPay/wulopay-php) |
+| Node.js | `npm install @wulopay/node` ([npm](https://www.npmjs.com/package/@wulopay/node)) | [wulopay-js](https://github.com/WuloPay/wulopay-js) |
+| React | `npm install @wulopay/react` ([npm](https://www.npmjs.com/package/@wulopay/react)) | [wulopay-js](https://github.com/WuloPay/wulopay-js) |
+| React Native / Expo | `npm install @wulopay/react-native` ([npm](https://www.npmjs.com/package/@wulopay/react-native)) | [wulopay-js](https://github.com/WuloPay/wulopay-js) |
+| Capacitor / Ionic | `npm install @wulopay/capacitor` ([npm](https://www.npmjs.com/package/@wulopay/capacitor)) | [wulopay-js](https://github.com/WuloPay/wulopay-js) |
+| iOS | Swift Package Manager: `https://github.com/WuloPay/wulopay-ios` | [wulopay-ios](https://github.com/WuloPay/wulopay-ios) |
+| Android | `implementation("com.github.WuloPay:wulopay-android:1.0.0")` ([JitPack](https://jitpack.io/#WuloPay/wulopay-android)) | [wulopay-android](https://github.com/WuloPay/wulopay-android) |
+| Flutter | `wulopay_checkout` (git dependency until it is on pub.dev) | [wulopay-flutter](https://github.com/WuloPay/wulopay-flutter) |
+
+Server packages (PHP, Node.js) create sessions with your API key. Browser and app packages only open the session URL
+your server returns: never put API keys in a web page or mobile app.
 
 ## How it works
 
