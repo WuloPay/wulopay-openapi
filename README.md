@@ -18,7 +18,7 @@ shopper to WuloPay's secure payment page, and get told by a signed webhook when 
 | Capacitor / Ionic | `npm install @wulopay/capacitor` ([npm](https://www.npmjs.com/package/@wulopay/capacitor)) | [wulopay-js](https://github.com/WuloPay/wulopay-js) |
 | iOS | Swift Package Manager: `https://github.com/WuloPay/wulopay-ios` | [wulopay-ios](https://github.com/WuloPay/wulopay-ios) |
 | Android | `implementation("com.github.WuloPay:wulopay-android:1.0.0")` ([JitPack](https://jitpack.io/#WuloPay/wulopay-android)) | [wulopay-android](https://github.com/WuloPay/wulopay-android) |
-| Flutter | `wulopay_checkout` (git dependency until it is on pub.dev) | [wulopay-flutter](https://github.com/WuloPay/wulopay-flutter) |
+| Flutter | `flutter pub add wulopay_checkout` ([pub.dev](https://pub.dev/packages/wulopay_checkout)) | [wulopay-flutter](https://github.com/WuloPay/wulopay-flutter) |
 
 Server packages (PHP, Node.js) create sessions with your API key. Browser and app packages only open the session URL
 your server returns: never put API keys in a web page or mobile app.
