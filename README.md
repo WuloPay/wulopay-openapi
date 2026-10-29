@@ -41,6 +41,24 @@ GET  /Checkout/Sessions/{id}       -> status "paid"     <- shopper returns to re
 4. Mark the order paid when the `checkout.session.completed` webhook arrives (verify the signature) or when
    `GET /Checkout/Sessions/{id}` says `paid`. The redirect back to your site is not proof of payment.
 
+## Subscriptions
+
+1. Create a plan once: `POST /Billing/Plans` (amount, `interval` day/week/month/year, optional `cycles` and `trialDays`).
+2. For each new subscriber, create a session with `mode: "subscription"`, `subscription.planId` and `customer.email`,
+   and redirect the shopper to `url`. They agree to the terms, pass the bank's check and pay the first charge (nothing
+   during a free trial). The card is stored by WuloPay; you get `subscription.created` with the subscription id.
+3. Choose who charges the renewals with `subscription.billingMode`:
+   - `wulopay`: WuloPay charges on the plan's schedule, retries failures after 1, 3 and 5 days, e-mails the shopper
+     and gives them a page to update the card or cancel. Follow along with `subscription.charge_succeeded`,
+     `subscription.charge_failed`, `subscription.past_due`, `subscription.cancelled` and the other `subscription.*` events.
+   - `merchant` (default): call `POST /Billing/Subscriptions/{id}/Charges` with an `Idempotency-Key` when a renewal is
+     due (e.g. from WooCommerce Subscriptions). Set `subscription.maxAmount` if later charges can be higher.
+4. Card expired or declined: `POST /Billing/Subscriptions/{id}/CardUpdateSession` gives a link where the shopper saves a
+   new card; `POST /Billing/Subscriptions/{id}/ManageLink` gives a link to their own subscription page.
+
+In the sandbox, `POST /Billing/Subscriptions/{id}/Advance` runs the next scheduled charge now, so you can test renewals
+without waiting; a plan of R60.00 declines every charge (start it with a free trial to see failures and retries).
+
 ## Webhook signatures
 
 Every webhook carries `WuloPay-Signature: t=<unix seconds>,v1=<hex>`. Compute HMAC-SHA256 of `"<t>.<raw body>"`
