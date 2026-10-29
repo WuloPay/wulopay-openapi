@@ -646,6 +646,11 @@ components:
               default: merchant
               description: '"wulopay": WuloPay charges on the plan schedule. "merchant": you call POST /Billing/Subscriptions/{id}/Charges.'
             maxAmount: { type: number, multipleOf: 0.01, description: 'Merchant billing: the most one later charge may be (shown to the shopper). Default the plan amount.' }
+            firstAmount:
+              type: number
+              minimum: 0
+              multipleOf: 0.01
+              description: 'Merchant billing: what the shopper pays today when it differs from the plan amount (sign-up fee, part period); 0 checks and stores the card without charging. Not with a plan that has trialDays.'
     CheckoutSession:
       type: object
       properties:
@@ -696,8 +701,8 @@ components:
         name: { type: string, maxLength: 120, example: Gold monthly }
         amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 49.00 }
         currency: { type: string, enum: [ZAR], default: ZAR }
-        interval: { type: string, enum: [week, month, year] }
-        intervalCount: { type: integer, minimum: 1, maximum: 12, default: 1 }
+        interval: { type: string, enum: [day, week, month, year] }
+        intervalCount: { type: integer, minimum: 1, maximum: 365, default: 1, description: '1 to 12 (1 to 365 for days)' }
         cycles: { type: ['integer', 'null'], minimum: 1, maximum: 1000, description: Charges including the first; null = until cancelled }
         trialDays: { type: integer, minimum: 0, maximum: 365, default: 0, description: Free days before the first charge }
     Plan:
@@ -708,7 +713,7 @@ components:
         name: { type: string }
         amount: { type: number }
         currency: { type: string }
-        interval: { type: string, enum: [week, month, year] }
+        interval: { type: string, enum: [day, week, month, year] }
         intervalCount: { type: integer }
         cycles: { type: ['integer', 'null'] }
         trialDays: { type: integer }
@@ -728,7 +733,7 @@ components:
         amount: { type: number }
         maxAmount: { type: number }
         currency: { type: string }
-        interval: { type: string, enum: [week, month, year] }
+        interval: { type: string, enum: [day, week, month, year] }
         intervalCount: { type: integer }
         cycles: { type: ['integer', 'null'] }
         chargesSucceeded: { type: integer }
