@@ -43,7 +43,7 @@ GET  /Checkout/Sessions/{id}       -> status "paid"     <- shopper returns to re
 
 ## Subscriptions
 
-1. Create a plan once: `POST /Billing/Plans` (amount, `interval` week/month/year, optional `cycles` and `trialDays`).
+1. Create a plan once: `POST /Billing/Plans` (amount, `interval` day/week/month/year, optional `cycles` and `trialDays`).
 2. For each new subscriber, create a session with `mode: "subscription"`, `subscription.planId` and `customer.email`,
    and redirect the shopper to `url`. They agree to the terms, pass the bank's check and pay the first charge (nothing
    during a free trial). The card is stored by WuloPay; you get `subscription.created` with the subscription id.
