@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WuloPay Hosted Checkout API
-  version: 1.0.0
+  version: 1.1.0
   summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
   description: |
     1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
@@ -11,6 +11,12 @@ info:
        `returnUrl` with `?session_id=…&status=…`.
     4. Confirm the payment from the `checkout.session.completed` webhook or `GET /Checkout/Sessions/{id}`.
        Never treat the redirect alone as proof of payment.
+
+    **Subscriptions.** Create a plan (`POST /Billing/Plans`), then a session with `mode: "subscription"` for each new
+    subscriber. The shopper agrees to the terms, passes the bank's check and pays the first charge (or nothing during a
+    free trial); the card is stored by WuloPay. With `billingMode: "wulopay"` WuloPay charges on the plan's schedule,
+    retries failures and e-mails the shopper; with `"merchant"` your system calls `POST /Billing/Subscriptions/{id}/Charges`.
+    Plans and subscriptions use the same scopes as checkout sessions.
 
     Amounts are in currency units (149.99 means R149.99). Errors are `{"error": "..."}` with the HTTP status.
   contact:
@@ -31,6 +37,10 @@ tags:
     description: One session per order; the shopper pays on its url.
   - name: Refunds
     description: Full or partial refunds of paid sessions.
+  - name: Plans
+    description: What a subscription charges and how often.
+  - name: Subscriptions
+    description: Created by paid sign-up sessions; charged on WuloPay's schedule or by your system.
 paths:
   /Authorization/Token/ApiToken:
     post:
@@ -145,6 +155,221 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /Billing/Plans:
+    post:
+      tags: [Plans]
+      summary: Create a plan
+      description: Needs scope `checkout.sessions.create`.
+      operationId: createPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlan' }
+      responses:
+        '201':
+          description: Plan created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '400': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [Plans]
+      summary: List plans
+      description: Needs scope `checkout.sessions.read`. Newest first.
+      operationId: listPlans
+      responses:
+        '200':
+          description: Plans
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Plan' } }
+        '401': { $ref: '#/components/responses/Error' }
+  /Billing/Plans/{id}:
+    get:
+      tags: [Plans]
+      summary: Get a plan
+      description: Needs scope `checkout.sessions.read`.
+      operationId: getPlan
+      parameters: [{ $ref: '#/components/parameters/PlanId' }]
+      responses:
+        '200':
+          description: The plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      description: Needs scope `checkout.sessions.read`. Newest first.
+      operationId: listSubscriptions
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [trialing, active, past_due, paused, cancelled, completed] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/Subscription' } }
+        '401': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get a subscription
+      description: Needs scope `checkout.sessions.read`.
+      operationId: getSubscription
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Subscription' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/Cancel:
+    post:
+      tags: [Subscriptions]
+      summary: Cancel a subscription
+      description: Needs scope `checkout.sessions.create`. With `atPeriodEnd` (WuloPay billing) it stops after the period the shopper has paid for; otherwise now.
+      operationId: cancelSubscription
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                atPeriodEnd: { type: boolean, default: false }
+      responses:
+        '200': { $ref: '#/components/responses/Subscription' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/Pause:
+    post:
+      tags: [Subscriptions]
+      summary: Pause (WuloPay billing)
+      description: Needs scope `checkout.sessions.create`. No charges until resumed; periods missed while paused are skipped.
+      operationId: pauseSubscription
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Subscription' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/Resume:
+    post:
+      tags: [Subscriptions]
+      summary: Resume a paused subscription
+      description: Needs scope `checkout.sessions.create`.
+      operationId: resumeSubscription
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Subscription' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/Charges:
+    post:
+      tags: [Subscriptions]
+      summary: Charge the stored card (merchant billing)
+      description: |
+        Needs scope `checkout.sessions.create`. Charges the stored card now as a recurring payment. The same
+        Idempotency-Key never charges twice. Refused (400/409) above the agreed `maxAmount`, after the last cycle, for a
+        subscription that is not active, or too soon after the last charge (12 hours; 1 minute in the sandbox).
+        A declined charge returns 200 with `status: "failed"`.
+      operationId: chargeSubscription
+      parameters:
+        - { $ref: '#/components/parameters/SubscriptionId' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Up to 100 characters, e.g. your renewal order id.
+          schema: { type: string, maxLength: 100 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: number, minimum: 0.01, multipleOf: 0.01, description: Default the subscription amount }
+      responses:
+        '200':
+          description: The charge (succeeded or failed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionCharge' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [Subscriptions]
+      summary: List charges
+      description: Needs scope `checkout.sessions.read`. Newest first; cycle 1 is the sign-up payment.
+      operationId: listSubscriptionCharges
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200':
+          description: Charges
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SubscriptionCharge' } }
+        '404': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/CardUpdateSession:
+    post:
+      tags: [Subscriptions]
+      summary: Create a card-update link
+      description: Needs scope `checkout.sessions.create`. Send the shopper to `url` to save a new card (the bank checks it; nothing is charged). A past-due WuloPay-billed subscription is charged again straight after.
+      operationId: createCardUpdateSession
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [returnUrl]
+              properties:
+                returnUrl: { type: string, maxLength: 2000, description: https (http://localhost in sandbox) }
+      responses:
+        '201':
+          description: The link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardUpdateSession' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/ManageLink:
+    post:
+      tags: [Subscriptions]
+      summary: Create a link to the shopper's subscription page
+      description: Needs scope `checkout.sessions.create`. The shopper can update the card or cancel there. Only the latest link works (45 days); every shopper e-mail carries a new one.
+      operationId: createManageLink
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200':
+          description: The link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManageLink' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Billing/Subscriptions/{id}/Advance:
+    post:
+      tags: [Subscriptions]
+      summary: Run the next scheduled charge now (sandbox only)
+      description: Makes the next charge, retry or the end of the trial happen now, so you can test renewals and failures (a plan of R60.00 always declines). 404 in live.
+      operationId: advanceSubscription
+      parameters: [{ $ref: '#/components/parameters/SubscriptionId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Subscription' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
 webhooks:
   checkout.session.completed:
     post:
@@ -182,6 +407,83 @@ webhooks:
       parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
       requestBody: { $ref: '#/components/requestBodies/RefundEvent' }
       responses: { '200': { description: Acknowledged } }
+  subscription.created:
+    post:
+      operationId: onSubscriptionCreated
+      summary: A sign-up was paid (or a free trial started); data.object is the subscription
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.charge_succeeded:
+    post:
+      operationId: onSubscriptionChargeSucceeded
+      summary: A charge went through; data.object is the charge
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/ChargeEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.charge_failed:
+    post:
+      operationId: onSubscriptionChargeFailed
+      summary: A charge was declined; data.object is the charge
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/ChargeEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.past_due:
+    post:
+      operationId: onSubscriptionPastDue
+      summary: The first failed charge of a period (WuloPay billing retries it)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.trial_ending:
+    post:
+      operationId: onSubscriptionTrialEnding
+      summary: The free trial ends within 7 days (WuloPay billing)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.card_updated:
+    post:
+      operationId: onSubscriptionCardUpdated
+      summary: The shopper saved a new card
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.paused:
+    post:
+      operationId: onSubscriptionPaused
+      summary: The subscription was paused
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.resumed:
+    post:
+      operationId: onSubscriptionResumed
+      summary: The subscription was resumed
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.cancel_scheduled:
+    post:
+      operationId: onSubscriptionCancelScheduled
+      summary: It will end after the paid period (subscription.cancelled follows then)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.cancelled:
+    post:
+      operationId: onSubscriptionCancelled
+      summary: The subscription ended; see cancellationReason
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  subscription.completed:
+    post:
+      operationId: onSubscriptionCompleted
+      summary: All cycles were charged
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
 components:
   securitySchemes:
     bearerAuth:
@@ -189,6 +491,16 @@ components:
       scheme: bearer
       description: The `authToken` from `POST /Authorization/Token/ApiToken`.
   parameters:
+    PlanId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: plan_3FNIVDJwKJs4ggm8AyoEAt }
+    SubscriptionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: sub_2KzyKaQd1fZgmDtird1OVX }
     SessionId:
       name: id
       in: path
@@ -228,6 +540,32 @@ components:
                     type: object
                     properties:
                       object: { $ref: '#/components/schemas/CheckoutSession' }
+    SubscriptionEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object: { $ref: '#/components/schemas/Subscription' }
+    ChargeEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object: { $ref: '#/components/schemas/SubscriptionCharge' }
     RefundEvent:
       required: true
       content:
@@ -252,6 +590,11 @@ components:
                           reason: { type: ['string', 'null'] }
                           error: { type: ['string', 'null'], description: refund.failed only }
   responses:
+    Subscription:
+      description: The subscription
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Subscription' }
     Error:
       description: Error
       content:
@@ -263,7 +606,8 @@ components:
   schemas:
     CreateCheckoutSession:
       type: object
-      required: [amount, currency, reference, returnUrl]
+      required: [reference, returnUrl]
+      description: '`amount` and `currency` are required, except in subscription mode where they come from the plan.'
       properties:
         amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 149.99 }
         currency: { type: string, enum: [ZAR] }
@@ -286,6 +630,22 @@ components:
           additionalProperties: { type: string, maxLength: 500 }
           description: Your own values (keys up to 40 characters), returned as given in responses and webhooks.
         expiresInMinutes: { type: integer, minimum: 5, maximum: 1440, default: 60 }
+        mode:
+          type: string
+          enum: [payment, subscription]
+          default: payment
+          description: '"subscription" makes a sign-up: the payment is the first charge (or a free trial) and the card is stored. customer.email is then required.'
+        subscription:
+          type: object
+          required: [planId]
+          properties:
+            planId: { type: string }
+            billingMode:
+              type: string
+              enum: [merchant, wulopay]
+              default: merchant
+              description: '"wulopay": WuloPay charges on the plan schedule. "merchant": you call POST /Billing/Subscriptions/{id}/Charges.'
+            maxAmount: { type: number, multipleOf: 0.01, description: 'Merchant billing: the most one later charge may be (shown to the shopper). Default the plan amount.' }
     CheckoutSession:
       type: object
       properties:
@@ -321,6 +681,104 @@ components:
         refundedAmount: { type: number }
         lastPaymentError: { type: ['string', 'null'], description: Why the last attempt failed; the shopper may try again until the session expires }
         paymentAttempts: { type: integer, description: Failed attempts so far (5 locks the session) }
+        mode: { type: string, enum: [payment, subscription] }
+        subscription:
+          type: ['object', 'null']
+          properties:
+            planId: { type: string }
+            billingMode: { type: string, enum: [merchant, wulopay] }
+            maxAmount: { type: ['number', 'null'] }
+            subscriptionId: { type: ['string', 'null'], description: Set once the sign-up is paid }
+    CreatePlan:
+      type: object
+      required: [name, amount, interval]
+      properties:
+        name: { type: string, maxLength: 120, example: Gold monthly }
+        amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 49.00 }
+        currency: { type: string, enum: [ZAR], default: ZAR }
+        interval: { type: string, enum: [week, month, year] }
+        intervalCount: { type: integer, minimum: 1, maximum: 12, default: 1 }
+        cycles: { type: ['integer', 'null'], minimum: 1, maximum: 1000, description: Charges including the first; null = until cancelled }
+        trialDays: { type: integer, minimum: 0, maximum: 365, default: 0, description: Free days before the first charge }
+    Plan:
+      type: object
+      properties:
+        id: { type: string, example: plan_3FNIVDJwKJs4ggm8AyoEAt }
+        object: { type: string, const: plan }
+        name: { type: string }
+        amount: { type: number }
+        currency: { type: string }
+        interval: { type: string, enum: [week, month, year] }
+        intervalCount: { type: integer }
+        cycles: { type: ['integer', 'null'] }
+        trialDays: { type: integer }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    Subscription:
+      type: object
+      properties:
+        id: { type: string, example: sub_2KzyKaQd1fZgmDtird1OVX }
+        object: { type: string, const: subscription }
+        status: { type: string, enum: [trialing, active, past_due, paused, cancelled, completed] }
+        billingMode: { type: string, enum: [merchant, wulopay] }
+        planId: { type: ['string', 'null'] }
+        planName: { type: ['string', 'null'] }
+        checkoutSessionId: { type: string }
+        reference: { type: ['string', 'null'], description: Your reference from the sign-up session }
+        amount: { type: number }
+        maxAmount: { type: number }
+        currency: { type: string }
+        interval: { type: string, enum: [week, month, year] }
+        intervalCount: { type: integer }
+        cycles: { type: ['integer', 'null'] }
+        chargesSucceeded: { type: integer }
+        lastChargeAt: { type: ['string', 'null'], format: date-time }
+        nextChargeAt: { type: ['string', 'null'], format: date-time, description: WuloPay billing }
+        cardBrand: { type: ['string', 'null'] }
+        last4: { type: ['string', 'null'] }
+        customer:
+          type: ['object', 'null']
+          description: API responses only, never in webhooks.
+          properties:
+            email: { type: ['string', 'null'] }
+            name: { type: ['string', 'null'] }
+        mandate: { type: ['string', 'null'], description: The exact terms the shopper agreed to }
+        mandateAcceptedAt: { type: string, format: date-time }
+        cancelAtPeriodEnd: { type: boolean }
+        cancelledAt: { type: ['string', 'null'], format: date-time }
+        cancellationReason: { type: ['string', 'null'], enum: [requested_by_merchant, requested_by_customer, payment_failed, null] }
+        trialEndsAt: { type: ['string', 'null'], format: date-time }
+        failedAttempts: { type: integer, description: Failed attempts for the current unpaid period }
+        pastDueSince: { type: ['string', 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+    SubscriptionCharge:
+      type: object
+      properties:
+        id: { type: string, example: ch_7FVIEeJU5wmglvfKLnFauS }
+        object: { type: string, const: subscription.charge }
+        subscriptionId: { type: string }
+        cycle: { type: integer }
+        status: { type: string, enum: [succeeded, failed, pending] }
+        amount: { type: number }
+        currency: { type: string }
+        failureMessage: { type: ['string', 'null'], description: Safe to show the shopper }
+        retryAllowed: { type: ['boolean', 'null'], description: 'false: the card network says not to retry this card; ask for a new card' }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: ['string', 'null'], format: date-time }
+    CardUpdateSession:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, const: checkout.session }
+        url: { type: string }
+        subscriptionId: { type: string }
+        expiresAt: { type: string, format: date-time }
+    ManageLink:
+      type: object
+      properties:
+        object: { type: string, const: subscription.manage_link }
+        url: { type: string }
+        expiresAt: { type: string, format: date-time }
     Refund:
       type: object
       properties:
@@ -333,7 +791,12 @@ components:
       required: [id, type, createdAt, environment, data]
       properties:
         id: { type: string, example: evt_1gQ2gPKgNNGlkhpdiBtdRR }
-        type: { type: string, enum: [checkout.session.completed, checkout.session.expired, checkout.session.payment_failed, refund.succeeded, refund.failed, webhook.test] }
+        type:
+          type: string
+          enum: [checkout.session.completed, checkout.session.expired, checkout.session.payment_failed, refund.succeeded, refund.failed,
+                 subscription.created, subscription.charge_succeeded, subscription.charge_failed, subscription.past_due,
+                 subscription.trial_ending, subscription.card_updated, subscription.paused, subscription.resumed,
+                 subscription.cancel_scheduled, subscription.cancelled, subscription.completed, webhook.test]
         createdAt: { type: string, format: date-time }
         environment: { type: string, enum: [sandbox, live] }
         data: { type: object }
