@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WuloPay Hosted Checkout API
-  version: 1.1.0
+  version: 1.2.0
   summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
   description: |
     1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
@@ -17,6 +17,13 @@ info:
     free trial); the card is stored by WuloPay. With `billingMode: "wulopay"` WuloPay charges on the plan's schedule,
     retries failures and e-mails the shopper; with `"merchant"` your system calls `POST /Billing/Subscriptions/{id}/Charges`.
     Plans and subscriptions use the same scopes as checkout sessions.
+
+    **Invoices and payment links.** Send a customer an invoice (`POST /Invoices`): WuloPay works out the tax and total
+    from the line items, e-mails the customer a link to WuloPay's payment page, and tells you by the `invoice.paid`
+    webhook. A payment link (`POST /PaymentLinks`) is a page you share yourself (a fixed price, a ticket, a deposit); it
+    can be paid many times, or `maxPayments` times. Invoices need scope `invoices.create`, links `links.purchase.create`;
+    each covers reading, sending and cancelling too. Payments made through them are ordinary checkout sessions (refund
+    them with `POST /Checkout/Sessions/{id}/Refunds`), and those sessions carry `invoiceId` or `paymentLinkId`.
 
     Amounts are in currency units (149.99 means R149.99). Errors are `{"error": "..."}` with the HTTP status.
   contact:
@@ -41,6 +48,10 @@ tags:
     description: What a subscription charges and how often.
   - name: Subscriptions
     description: Created by paid sign-up sessions; charged on WuloPay's schedule or by your system.
+  - name: Invoices
+    description: An invoice e-mailed to your customer and paid once on WuloPay's page. WuloPay works out the totals.
+  - name: Payment links
+    description: A payment page you share yourself, paid as often as you allow.
 paths:
   /Authorization/Token/ApiToken:
     post:
@@ -370,6 +381,155 @@ paths:
         '200': { $ref: '#/components/responses/Subscription' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /Invoices:
+    post:
+      tags: [Invoices]
+      summary: Create an invoice
+      description: |
+        Needs scope `invoices.create`. WuloPay works out each line's tax and total and the invoice total from
+        `lineItems` (prices exclude tax unless `pricesIncludeTax`), adds shipping and takes off `discount`. Leave
+        `amount` out; if you send it, it must match WuloPay's total. With `send` (the default) the customer gets an
+        e-mail with a "Pay invoice" button. Send an `Idempotency-Key` to make retries safe.
+      operationId: createInvoice
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInvoice' }
+      responses:
+        '201':
+          description: Invoice created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [Invoices]
+      summary: List invoices
+      description: Needs scope `invoices.create`. Newest first.
+      operationId: listInvoices
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [open, paid, cancelled, expired] }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/Invoice' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /Invoices/{id}:
+    get:
+      tags: [Invoices]
+      summary: Get an invoice
+      description: Needs scope `invoices.create`. Once paid, `payment` has the card and any refunds.
+      operationId: getInvoice
+      parameters: [{ $ref: '#/components/parameters/InvoiceId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Invoice' }
+        '404': { $ref: '#/components/responses/Error' }
+  /Invoices/{id}/Send:
+    post:
+      tags: [Invoices]
+      summary: Send (or resend) the invoice e-mail
+      description: Needs scope `invoices.create`. Open invoices only; otherwise 409.
+      operationId: sendInvoice
+      parameters: [{ $ref: '#/components/parameters/InvoiceId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Invoice' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /Invoices/{id}/Cancel:
+    post:
+      tags: [Invoices]
+      summary: Cancel an unpaid invoice
+      description: |
+        Needs scope `invoices.create`. The invoice's page then tells the customer it was cancelled. Cancelling twice is
+        fine. A paid invoice returns 409 (refund its payment instead), and so does an invoice while a payment is under way.
+      operationId: cancelInvoice
+      parameters: [{ $ref: '#/components/parameters/InvoiceId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Invoice' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /PaymentLinks:
+    post:
+      tags: [Payment links]
+      summary: Create a payment link
+      description: |
+        Needs scope `links.purchase.create`. Give an `amount`, or `lineItems` and WuloPay adds them up. Share the `url`;
+        each payment sends `payment_link.paid`. `maxPayments: 1` makes a single-use link.
+      operationId: createPaymentLink
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePaymentLink' }
+      responses:
+        '201':
+          description: Link created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentLink' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [Payment links]
+      summary: List payment links
+      description: Needs scope `links.purchase.create`. Newest first.
+      operationId: listPaymentLinks
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [active, completed, cancelled, expired] }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Payment links
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/PaymentLink' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /PaymentLinks/{id}:
+    get:
+      tags: [Payment links]
+      summary: Get a payment link
+      description: Needs scope `links.purchase.create`. Includes how many times it was paid and the total collected.
+      operationId: getPaymentLink
+      parameters: [{ $ref: '#/components/parameters/PaymentLinkId' }]
+      responses:
+        '200': { $ref: '#/components/responses/PaymentLink' }
+        '404': { $ref: '#/components/responses/Error' }
+  /PaymentLinks/{id}/Cancel:
+    post:
+      tags: [Payment links]
+      summary: Stop taking payments on a link
+      description: Needs scope `links.purchase.create`. Payments already made stay; refund them on their checkout session.
+      operationId: cancelPaymentLink
+      parameters: [{ $ref: '#/components/parameters/PaymentLinkId' }]
+      responses:
+        '200': { $ref: '#/components/responses/PaymentLink' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
 webhooks:
   checkout.session.completed:
     post:
@@ -484,6 +644,27 @@ webhooks:
       parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
       requestBody: { $ref: '#/components/requestBodies/SubscriptionEvent' }
       responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  invoice.paid:
+    post:
+      operationId: onInvoicePaid
+      summary: An invoice was paid; data.object is the invoice (with payment)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/InvoiceEvent' }
+      responses: { '200': { description: Any 2xx within 10 seconds acknowledges the event } }
+  invoice.expired:
+    post:
+      operationId: onInvoiceExpired
+      summary: An invoice passed its expiry date unpaid (checked hourly); data.object is the invoice
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/InvoiceEvent' }
+      responses: { '200': { description: Acknowledged } }
+  payment_link.paid:
+    post:
+      operationId: onPaymentLinkPaid
+      summary: A payment link was paid (each payment); data.object is the link, with payment = this payment
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/PaymentLinkEvent' }
+      responses: { '200': { description: Acknowledged } }
 components:
   securitySchemes:
     bearerAuth:
@@ -491,6 +672,27 @@ components:
       scheme: bearer
       description: The `authToken` from `POST /Authorization/Token/ApiToken`.
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Up to 100 characters. Repeating a request with the same key returns the same object; reusing it for a different amount returns 409.
+      schema: { type: string, maxLength: 100 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    InvoiceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: inv_6os56f9sFKmoqHp7zRZQKR }
+    PaymentLinkId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: plink_2S23hSkBb3HWKoh6y0YoGp }
     PlanId:
       name: id
       in: path
@@ -589,7 +791,43 @@ components:
                           remainingRefundable: { type: number }
                           reason: { type: ['string', 'null'] }
                           error: { type: ['string', 'null'], description: refund.failed only }
+    InvoiceEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object: { $ref: '#/components/schemas/Invoice' }
+    PaymentLinkEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object: { $ref: '#/components/schemas/PaymentLink' }
   responses:
+    Invoice:
+      description: The invoice
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Invoice' }
+    PaymentLink:
+      description: The payment link
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PaymentLink' }
     Subscription:
       description: The subscription
       content:
@@ -694,6 +932,8 @@ components:
             billingMode: { type: string, enum: [merchant, wulopay] }
             maxAmount: { type: ['number', 'null'] }
             subscriptionId: { type: ['string', 'null'], description: Set once the sign-up is paid }
+        invoiceId: { type: ['string', 'null'], description: 'Set when the session pays an invoice' }
+        paymentLinkId: { type: ['string', 'null'], description: 'Set when the session pays a payment link' }
     CreatePlan:
       type: object
       required: [name, amount, interval]
@@ -784,6 +1024,147 @@ components:
         object: { type: string, const: subscription.manage_link }
         url: { type: string }
         expiresAt: { type: string, format: date-time }
+    LineItemRequest:
+      type: object
+      required: [name, unitPrice]
+      properties:
+        name: { type: string, maxLength: 100, example: Premium Gateway Feature }
+        sku: { type: string, maxLength: 50, example: SKU-WULO-001 }
+        description: { type: string, maxLength: 200 }
+        quantity: { type: integer, minimum: 1, maximum: 10000, default: 1 }
+        unitPrice: { type: number, minimum: 0, multipleOf: 0.01, example: 1250.00, description: 'Price of one unit; excludes tax unless pricesIncludeTax' }
+        taxRate: { type: number, minimum: 0, maximum: 100, example: 15, description: 'Percent (15 = 15% VAT). Ignored when taxAmount is given.' }
+        taxAmount: { type: number, minimum: 0, multipleOf: 0.01, description: 'The line''s tax as an amount, instead of a rate' }
+        discount: { type: number, minimum: 0, multipleOf: 0.01, description: 'An amount off this line' }
+    LineItem:
+      type: object
+      properties:
+        name: { type: string }
+        sku: { type: ['string', 'null'] }
+        description: { type: ['string', 'null'] }
+        quantity: { type: integer }
+        unitPrice: { type: number }
+        discount: { type: number }
+        taxRate: { type: ['number', 'null'] }
+        tax: { type: number, example: 187.50 }
+        total: { type: number, example: 1437.50, description: 'What the line adds to the total, tax included' }
+    LinkPayment:
+      type: ['object', 'null']
+      properties:
+        sessionId: { type: string, description: 'The checkout session that paid; refund with POST /Checkout/Sessions/{id}/Refunds' }
+        amount: { type: number }
+        cardBrand: { type: ['string', 'null'], example: Visa }
+        last4: { type: ['string', 'null'], example: '2701' }
+        paidAt: { type: ['string', 'null'], format: date-time }
+        amountRefunded: { type: number }
+    CreateInvoice:
+      type: object
+      required: [customer]
+      description: 'Give lineItems (recommended) or, without lines, an amount.'
+      properties:
+        reference: { type: string, maxLength: 64, description: 'Your invoice number. Default INV-yyMMdd-XXXXXX.' }
+        description: { type: string, maxLength: 120, example: Consulting and API Integration Services }
+        currency: { type: string, enum: [ZAR], default: ZAR }
+        customer:
+          type: object
+          required: [name, email]
+          properties:
+            name: { type: string, maxLength: 120, example: Pretty Magwebu }
+            email: { type: string, format: email, maxLength: 254 }
+            id: { type: string, maxLength: 64, description: 'Your customer id' }
+            company: { type: string, maxLength: 120 }
+        lineItems: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/LineItemRequest' } }
+        pricesIncludeTax: { type: boolean, default: false, description: 'true when unitPrice already includes VAT (WuloPay works the tax out of it)' }
+        shipping:
+          type: object
+          properties:
+            amount: { type: number, minimum: 0, multipleOf: 0.01 }
+            taxRate: { type: number, minimum: 0, maximum: 100 }
+        discount: { type: number, minimum: 0, multipleOf: 0.01, description: 'An amount off the invoice total' }
+        amount: { type: number, multipleOf: 0.01, description: 'Optional with lineItems: checked against WuloPay''s total (400 if it differs). Required without lineItems.' }
+        dueDate: { type: string, format: date, example: '2026-11-30', description: 'Shown to the customer' }
+        expiresOn: { type: string, format: date, example: '2026-12-15', description: 'Can be paid until the end of this day (South African time). Default 30 days after dueDate (or today).' }
+        send: { type: boolean, default: true, description: 'E-mail the invoice to the customer now' }
+        metadata: { type: object, additionalProperties: { type: string, maxLength: 500 }, maxProperties: 20 }
+      example:
+        description: Consulting and API Integration Services
+        customer: { name: Pretty Magwebu, email: pretty@example.com, id: CUST-10030, company: WeWork Office X }
+        lineItems: [{ name: Premium Gateway Feature, sku: SKU-WULO-001, quantity: 1, unitPrice: 1250.00, taxRate: 15 }]
+        dueDate: '2026-11-30'
+        expiresOn: '2026-12-15'
+        metadata: { orderId: '1042' }
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, example: inv_6os56f9sFKmoqHp7zRZQKR }
+        object: { type: string, const: invoice }
+        environment: { type: string, enum: [sandbox, live] }
+        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/inv_6os56f9sFKmoqHp7zRZQKR', description: 'The customer''s payment page' }
+        status: { type: string, enum: [open, paid, cancelled, expired] }
+        reference: { type: string, example: INV-261105-7GGNAJ }
+        description: { type: ['string', 'null'] }
+        currency: { type: string }
+        customer:
+          type: object
+          properties:
+            name: { type: string }
+            email: { type: string }
+            id: { type: ['string', 'null'] }
+            company: { type: ['string', 'null'] }
+        lineItems: { type: array, items: { $ref: '#/components/schemas/LineItem' } }
+        subtotal: { type: ['number', 'null'], example: 1250.00, description: 'Lines before tax' }
+        tax: { type: ['number', 'null'], example: 187.50 }
+        shipping: { type: ['number', 'null'] }
+        discount: { type: ['number', 'null'] }
+        amount: { type: number, example: 1437.50, description: 'Amount due: subtotal + tax + shipping - discount' }
+        amountPaid: { type: number }
+        dueDate: { type: ['string', 'null'], format: date }
+        expiresAt: { type: ['string', 'null'], format: date-time }
+        sentAt: { type: ['string', 'null'], format: date-time }
+        paidAt: { type: ['string', 'null'], format: date-time }
+        cancelledAt: { type: ['string', 'null'], format: date-time }
+        payment: { $ref: '#/components/schemas/LinkPayment' }
+        metadata: { type: object, additionalProperties: { type: string } }
+        createdAt: { type: string, format: date-time }
+    CreatePaymentLink:
+      type: object
+      description: 'Give an amount, or lineItems (or both: they must agree).'
+      properties:
+        reference: { type: string, maxLength: 64, description: 'Your reference. Default LINK-yyMMdd-XXXXXX.' }
+        description: { type: string, maxLength: 120, example: Workshop ticket }
+        currency: { type: string, enum: [ZAR], default: ZAR }
+        amount: { type: number, minimum: 0.01, multipleOf: 0.01, example: 150.00 }
+        lineItems: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/LineItemRequest' } }
+        pricesIncludeTax: { type: boolean, default: false }
+        expiresAt: { type: string, format: date-time, description: 'Optional end of the link' }
+        maxPayments: { type: integer, minimum: 1, description: 'Stop after this many payments (1 = single use). No limit when left out.' }
+        metadata: { type: object, additionalProperties: { type: string, maxLength: 500 }, maxProperties: 20 }
+      example:
+        description: Workshop ticket
+        amount: 150.00
+        maxPayments: 40
+    PaymentLink:
+      type: object
+      properties:
+        id: { type: string, example: plink_2S23hSkBb3HWKoh6y0YoGp }
+        object: { type: string, const: payment_link }
+        environment: { type: string, enum: [sandbox, live] }
+        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/plink_2S23hSkBb3HWKoh6y0YoGp' }
+        status: { type: string, enum: [active, completed, cancelled, expired], description: 'completed = maxPayments reached' }
+        reference: { type: string }
+        description: { type: ['string', 'null'] }
+        currency: { type: string }
+        amount: { type: number }
+        lineItems: { type: array, items: { $ref: '#/components/schemas/LineItem' } }
+        maxPayments: { type: ['integer', 'null'] }
+        timesPaid: { type: integer }
+        amountCollected: { type: number }
+        lastPaidAt: { type: ['string', 'null'], format: date-time }
+        expiresAt: { type: ['string', 'null'], format: date-time }
+        cancelledAt: { type: ['string', 'null'], format: date-time }
+        payment: { $ref: '#/components/schemas/LinkPayment' }
+        metadata: { type: object, additionalProperties: { type: string } }
+        createdAt: { type: string, format: date-time }
     Refund:
       type: object
       properties:
@@ -801,7 +1182,8 @@ components:
           enum: [checkout.session.completed, checkout.session.expired, checkout.session.payment_failed, refund.succeeded, refund.failed,
                  subscription.created, subscription.charge_succeeded, subscription.charge_failed, subscription.past_due,
                  subscription.trial_ending, subscription.card_updated, subscription.paused, subscription.resumed,
-                 subscription.cancel_scheduled, subscription.cancelled, subscription.completed, webhook.test]
+                 subscription.cancel_scheduled, subscription.cancelled, subscription.completed,
+                 invoice.paid, invoice.expired, payment_link.paid, webhook.test]
         createdAt: { type: string, format: date-time }
         environment: { type: string, enum: [sandbox, live] }
         data: { type: object }
