@@ -687,12 +687,12 @@ components:
       name: id
       in: path
       required: true
-      schema: { type: string, example: inv_6os56f9sFKmoqHp7zRZQKR }
+      schema: { type: string, example: inv_4fQ8bT2nKx7LmP9sRv3WcY }
     PaymentLinkId:
       name: id
       in: path
       required: true
-      schema: { type: string, example: plink_2S23hSkBb3HWKoh6y0YoGp }
+      schema: { type: string, example: plink_6hZ2qN8rTb5VxK1mLp4DsE }
     PlanId:
       name: id
       in: path
@@ -1028,8 +1028,8 @@ components:
       type: object
       required: [name, unitPrice]
       properties:
-        name: { type: string, maxLength: 100, example: Premium Gateway Feature }
-        sku: { type: string, maxLength: 50, example: SKU-WULO-001 }
+        name: { type: string, maxLength: 100, example: Website design }
+        sku: { type: string, maxLength: 50, example: WEB-001 }
         description: { type: string, maxLength: 200 }
         quantity: { type: integer, minimum: 1, maximum: 10000, default: 1 }
         unitPrice: { type: number, minimum: 0, multipleOf: 0.01, example: 1250.00, description: 'Price of one unit; excludes tax unless pricesIncludeTax' }
@@ -1063,13 +1063,13 @@ components:
       description: 'Give lineItems (recommended) or, without lines, an amount.'
       properties:
         reference: { type: string, maxLength: 64, description: 'Your invoice number. Default INV-yyMMdd-XXXXXX.' }
-        description: { type: string, maxLength: 120, example: Consulting and API Integration Services }
+        description: { type: string, maxLength: 120, example: Website design and hosting }
         currency: { type: string, enum: [ZAR], default: ZAR }
         customer:
           type: object
           required: [name, email]
           properties:
-            name: { type: string, maxLength: 120, example: Pretty Magwebu }
+            name: { type: string, maxLength: 120, example: Jane Doe }
             email: { type: string, format: email, maxLength: 254 }
             id: { type: string, maxLength: 64, description: 'Your customer id' }
             company: { type: string, maxLength: 120 }
@@ -1087,21 +1087,21 @@ components:
         send: { type: boolean, default: true, description: 'E-mail the invoice to the customer now' }
         metadata: { type: object, additionalProperties: { type: string, maxLength: 500 }, maxProperties: 20 }
       example:
-        description: Consulting and API Integration Services
-        customer: { name: Pretty Magwebu, email: pretty@example.com, id: CUST-10030, company: WeWork Office X }
-        lineItems: [{ name: Premium Gateway Feature, sku: SKU-WULO-001, quantity: 1, unitPrice: 1250.00, taxRate: 15 }]
+        description: Website design and hosting
+        customer: { name: Jane Doe, email: jane@example.com, id: C-1042, company: Example Trading (Pty) Ltd }
+        lineItems: [{ name: Website design, sku: WEB-001, quantity: 1, unitPrice: 1250.00, taxRate: 15 }]
         dueDate: '2026-11-30'
         expiresOn: '2026-12-15'
         metadata: { orderId: '1042' }
     Invoice:
       type: object
       properties:
-        id: { type: string, example: inv_6os56f9sFKmoqHp7zRZQKR }
+        id: { type: string, example: inv_4fQ8bT2nKx7LmP9sRv3WcY }
         object: { type: string, const: invoice }
         environment: { type: string, enum: [sandbox, live] }
-        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/inv_6os56f9sFKmoqHp7zRZQKR', description: 'The customer''s payment page' }
+        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/inv_4fQ8bT2nKx7LmP9sRv3WcY', description: 'The customer''s payment page' }
         status: { type: string, enum: [open, paid, cancelled, expired] }
-        reference: { type: string, example: INV-261105-7GGNAJ }
+        reference: { type: string, example: INV-261130-K7Q2ZP }
         description: { type: ['string', 'null'] }
         currency: { type: string }
         customer:
@@ -1146,10 +1146,10 @@ components:
     PaymentLink:
       type: object
       properties:
-        id: { type: string, example: plink_2S23hSkBb3HWKoh6y0YoGp }
+        id: { type: string, example: plink_6hZ2qN8rTb5VxK1mLp4DsE }
         object: { type: string, const: payment_link }
         environment: { type: string, enum: [sandbox, live] }
-        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/plink_2S23hSkBb3HWKoh6y0YoGp' }
+        url: { type: string, example: 'https://pay-sandbox.wulopay.com/l/plink_6hZ2qN8rTb5VxK1mLp4DsE' }
         status: { type: string, enum: [active, completed, cancelled, expired], description: 'completed = maxPayments reached' }
         reference: { type: string }
         description: { type: ['string', 'null'] }
