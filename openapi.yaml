@@ -443,7 +443,7 @@ paths:
     post:
       tags: [Invoices]
       summary: Send (or resend) the invoice e-mail
-      description: Needs scope `invoices.create`. Open invoices only; otherwise 409.
+      description: Needs scope `invoices.create`. Open invoices only; otherwise 409. If the invoice was e-mailed before, this one is sent as a reminder (its subject starts with "Reminder:").
       operationId: sendInvoice
       parameters: [{ $ref: '#/components/parameters/InvoiceId' }]
       responses:
