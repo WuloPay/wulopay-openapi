@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WuloPay Hosted Checkout API
-  version: 1.2.1
+  version: 1.3.0
   summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
   description: |
     1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
@@ -853,7 +853,7 @@ components:
       description: '`amount` and `currency` are required, except in subscription mode where they come from the plan.'
       properties:
         amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 149.99 }
-        currency: { type: string, enum: [ZAR] }
+        currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], description: 'ZAR, NAD (Namibia), BWP (Botswana), LSL (Lesotho) or SZL (eSwatini). The sandbox accepts all five; in live, currencies other than ZAR are enabled per merchant on request.' }
         reference: { type: string, maxLength: 64, description: Your order id, example: '1042' }
         description: { type: string, maxLength: 120, example: Order 1042 from Example Shop }
         customer:
@@ -945,7 +945,7 @@ components:
       properties:
         name: { type: string, maxLength: 120, example: Gold monthly }
         amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 49.00 }
-        currency: { type: string, enum: [ZAR], default: ZAR }
+        currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], default: ZAR, description: 'ZAR, NAD (Namibia), BWP (Botswana), LSL (Lesotho) or SZL (eSwatini). The sandbox accepts all five; in live, currencies other than ZAR are enabled per merchant on request.' }
         interval: { type: string, enum: [day, week, month, year] }
         intervalCount: { type: integer, minimum: 1, maximum: 365, default: 1, description: '1 to 12 (1 to 365 for days)' }
         cycles: { type: ['integer', 'null'], minimum: 1, maximum: 1000, description: Charges including the first; null = until cancelled }
@@ -1069,7 +1069,7 @@ components:
       properties:
         reference: { type: string, maxLength: 64, description: 'Your invoice number. Default INV-yyMMdd-XXXXXX.' }
         description: { type: string, maxLength: 120, example: Website design and hosting }
-        currency: { type: string, enum: [ZAR], default: ZAR }
+        currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], default: ZAR, description: 'ZAR, NAD (Namibia), BWP (Botswana), LSL (Lesotho) or SZL (eSwatini). The sandbox accepts all five; in live, currencies other than ZAR are enabled per merchant on request.' }
         customer:
           type: object
           required: [name, email]
@@ -1137,7 +1137,7 @@ components:
       properties:
         reference: { type: string, maxLength: 64, description: 'Your reference. Default LINK-yyMMdd-XXXXXX.' }
         description: { type: string, maxLength: 120, example: Workshop ticket }
-        currency: { type: string, enum: [ZAR], default: ZAR }
+        currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], default: ZAR, description: 'ZAR, NAD (Namibia), BWP (Botswana), LSL (Lesotho) or SZL (eSwatini). The sandbox accepts all five; in live, currencies other than ZAR are enabled per merchant on request.' }
         amount: { type: number, minimum: 0.01, multipleOf: 0.01, example: 150.00 }
         lineItems: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/LineItemRequest' } }
         pricesIncludeTax: { type: boolean, default: false }
