@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WuloPay Hosted Checkout API
-  version: 1.2.0
+  version: 1.2.1
   summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
   description: |
     1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
@@ -557,6 +557,10 @@ webhooks:
     post:
       operationId: onRefundSucceeded
       summary: A refund went through
+      description: >-
+        Sent for refunds made through the API and for refunds made in the WuloPay merchant portal (source tells them
+        apart). A payment reversed in the portal is sent as a full refund. totalRefunded is the session's running total,
+        so a shop can record the difference from what it already has and ignore repeats.
       parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
       requestBody: { $ref: '#/components/requestBodies/RefundEvent' }
       responses: { '200': { description: Acknowledged } }
@@ -790,6 +794,7 @@ components:
                           totalRefunded: { type: number }
                           remainingRefundable: { type: number }
                           reason: { type: ['string', 'null'] }
+                          source: { type: string, enum: [api, portal], description: 'Where the refund was made (refund.succeeded).' }
                           error: { type: ['string', 'null'], description: refund.failed only }
     InvoiceEvent:
       required: true
