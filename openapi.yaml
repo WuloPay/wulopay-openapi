@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WuloPay Hosted Checkout API
-  version: 1.3.0
+  version: 1.4.0
   summary: Take card payments on WuloPay's secure payment page and get notified by signed webhooks.
   description: |
     1. Exchange your API key and secret for a short-lived token (`POST /Authorization/Token/ApiToken`). Do this on
@@ -24,6 +24,14 @@ info:
     can be paid many times, or `maxPayments` times. Invoices need scope `invoices.create`, links `links.purchase.create`;
     each covers reading, sending and cancelling too. Payments made through them are ordinary checkout sessions (refund
     them with `POST /Checkout/Sessions/{id}/Refunds`), and those sessions carry `invoiceId` or `paymentLinkId`.
+
+    **Saved cards.** Let shoppers save a card and pay with it later. Name each shopper with your own
+    `customerReference`. Save a card on WuloPay's page: a session with `mode: "save_card"` checks the card with the bank
+    and charges nothing, or a payment session with `saveCard: true` lets the shopper tick a box to save the card while
+    paying. List, rename, set the default and remove cards with the `/Wallet` calls (scopes `wallet.read` and
+    `wallet.write`). To pay with a saved card, call `POST /Wallet/Customers/{customerReference}/Cards/{cardId}/Payments`
+    (also `checkout.sessions.create`) and open the returned `url`: the shopper sees the card and confirms with 3-D
+    Secure. Card numbers never reach your systems; you see the brand, the last 4 digits and the expiry date.
 
     Amounts are in currency units (149.99 means R149.99). Errors are `{"error": "..."}` with the HTTP status.
   contact:
@@ -52,6 +60,8 @@ tags:
     description: An invoice e-mailed to your customer and paid once on WuloPay's page. WuloPay works out the totals.
   - name: Payment links
     description: A payment page you share yourself, paid as often as you allow.
+  - name: Saved cards
+    description: Each shopper's saved cards, named by your customerReference. Cards are saved and paid with on WuloPay's page.
 paths:
   /Authorization/Token/ApiToken:
     post:
@@ -530,6 +540,104 @@ paths:
         '200': { $ref: '#/components/responses/PaymentLink' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /Wallet/Customers/{customerReference}:
+    put:
+      tags: [Saved cards]
+      summary: Create or update a customer
+      description: Needs scope `wallet.write`. Optional; saving a card creates the customer too.
+      operationId: upsertWalletCustomer
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertWalletCustomer' }
+      responses:
+        '200': { description: The customer, content: { application/json: { schema: { $ref: '#/components/schemas/WalletCustomer' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [Saved cards]
+      summary: Get a customer and their saved cards
+      description: Needs scope `wallet.read`.
+      operationId: getWalletCustomer
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }]
+      responses:
+        '200': { description: The customer, content: { application/json: { schema: { $ref: '#/components/schemas/WalletCustomer' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Saved cards]
+      summary: Delete a customer and all their saved cards
+      description: Needs scope `wallet.write`. Removes every card and clears the customer's details (for example on a privacy request).
+      operationId: deleteWalletCustomer
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/Error' }
+  /Wallet/Customers/{customerReference}/Cards:
+    get:
+      tags: [Saved cards]
+      summary: List a customer's saved cards
+      description: Needs scope `wallet.read`. The default card first, then the newest.
+      operationId: listWalletCards
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }]
+      responses:
+        '200':
+          description: The cards
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/WalletCard' } }
+        '404': { $ref: '#/components/responses/Error' }
+  /Wallet/Customers/{customerReference}/Cards/{cardId}:
+    patch:
+      tags: [Saved cards]
+      summary: Rename a card or make it the default
+      description: Needs scope `wallet.write`.
+      operationId: updateWalletCard
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }, { $ref: '#/components/parameters/CardId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateWalletCard' }
+      responses:
+        '200': { description: The card, content: { application/json: { schema: { $ref: '#/components/schemas/WalletCard' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Saved cards]
+      summary: Remove a saved card
+      description: Needs scope `wallet.write`. The card can no longer be charged from this moment.
+      operationId: removeWalletCard
+      parameters: [{ $ref: '#/components/parameters/CustomerReference' }, { $ref: '#/components/parameters/CardId' }]
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
+  /Wallet/Customers/{customerReference}/Cards/{cardId}/Payments:
+    post:
+      tags: [Saved cards]
+      summary: Pay with a saved card
+      description: >-
+        Needs scopes `wallet.write` and `checkout.sessions.create`. Creates a checkout session that pays with this card and
+        answers `requires_action` with its `url`. Open it for the shopper (in a browser, or with the mobile libraries):
+        WuloPay's page shows the card and the shopper confirms with 3-D Secure. Confirm the outcome from the
+        `checkout.session.completed` webhook or `GET /Checkout/Sessions/{sessionId}`. The same is possible with
+        `POST /Checkout/Sessions` and `cardId`.
+      operationId: payWithWalletCard
+      parameters:
+        - { $ref: '#/components/parameters/CustomerReference' }
+        - { $ref: '#/components/parameters/CardId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletPaymentRequest' }
+      responses:
+        '201': { description: Waiting for the shopper, content: { application/json: { schema: { $ref: '#/components/schemas/WalletPayment' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
 webhooks:
   checkout.session.completed:
     post:
@@ -669,6 +777,35 @@ webhooks:
       parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
       requestBody: { $ref: '#/components/requestBodies/PaymentLinkEvent' }
       responses: { '200': { description: Acknowledged } }
+  card.saved:
+    post:
+      operationId: onCardSaved
+      summary: A card was saved to a customer's wallet
+      description: '`data.object.replaces` lists cards this one replaced (the same card number saved again; they were removed).'
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/CardEvent' }
+      responses: { '200': { description: Acknowledged } }
+  card.removed:
+    post:
+      operationId: onCardRemoved
+      summary: A saved card was removed (by you, or replaced by the same card saved again)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/CardEvent' }
+      responses: { '200': { description: Acknowledged } }
+  card.expiring:
+    post:
+      operationId: onCardExpiring
+      summary: A saved card expires within 30 days (sent once per card)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/CardEvent' }
+      responses: { '200': { description: Acknowledged } }
+  card.expired:
+    post:
+      operationId: onCardExpired
+      summary: A saved card has expired (sent once per card)
+      parameters: [{ $ref: '#/components/parameters/Signature' }, { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/EventType' }]
+      requestBody: { $ref: '#/components/requestBodies/CardEvent' }
+      responses: { '200': { description: Acknowledged } }
 components:
   securitySchemes:
     bearerAuth:
@@ -707,6 +844,17 @@ components:
       in: path
       required: true
       schema: { type: string, example: sub_2KzyKaQd1fZgmDtird1OVX }
+    CustomerReference:
+      name: customerReference
+      in: path
+      required: true
+      description: 'Your id for the shopper. 1 to 64 characters: letters, digits and . _ : @ + -'
+      schema: { type: string, pattern: '^[A-Za-z0-9._:@+-]{1,64}$', example: customer-1042 }
+    CardId:
+      name: cardId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     SessionId:
       name: id
       in: path
@@ -733,6 +881,25 @@ components:
       required: true
       schema: { type: string, example: checkout.session.completed }
   requestBodies:
+    CardEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EventEnvelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      object:
+                        type: object
+                        properties:
+                          customerReference: { type: string }
+                          card: { $ref: '#/components/schemas/WalletCard' }
+                          replaces: { type: ['array', 'null'], items: { type: string }, description: 'card.saved: ids of the cards it replaced' }
+                          replacedBy: { type: ['string', 'null'], description: 'card.removed: the card that replaced it' }
     SessionEvent:
       required: true
       content:
@@ -850,9 +1017,9 @@ components:
     CreateCheckoutSession:
       type: object
       required: [reference, returnUrl]
-      description: '`amount` and `currency` are required, except in subscription mode where they come from the plan.'
+      description: '`amount` and `currency` are required, except in subscription mode where they come from the plan, and in save_card mode (nothing is charged; currency defaults to ZAR).'
       properties:
-        amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 149.99 }
+        amount: { type: number, minimum: 0, maximum: 1000000, multipleOf: 0.01, example: 149.99, description: 'Greater than 0, except 0 or left out in save_card mode.' }
         currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], description: 'ZAR, NAD (Namibia), BWP (Botswana), LSL (Lesotho) or SZL (eSwatini). The sandbox accepts all five; in live, currencies other than ZAR are enabled per merchant on request.' }
         reference: { type: string, maxLength: 64, description: Your order id, example: '1042' }
         description: { type: string, maxLength: 120, example: Order 1042 from Example Shop }
@@ -875,9 +1042,20 @@ components:
         expiresInMinutes: { type: integer, minimum: 5, maximum: 1440, default: 60 }
         mode:
           type: string
-          enum: [payment, subscription]
+          enum: [payment, subscription, save_card]
           default: payment
-          description: '"subscription" makes a sign-up: the payment is the first charge (or a free trial) and the card is stored. customer.email is then required.'
+          description: '"subscription" makes a sign-up: the payment is the first charge (or a free trial) and the card is stored. customer.email is then required. "save_card" saves a card to the customer''s wallet: the bank checks it, nothing is charged, and the shopper must agree on the page. Needs customerReference.'
+        customerReference:
+          type: string
+          pattern: '^[A-Za-z0-9._:@+-]{1,64}$'
+          description: Your id for the shopper. Required with mode save_card, saveCard or cardId.
+        saveCard:
+          type: boolean
+          description: 'Payment mode: offer the shopper a box to save the card while paying (unticked by default). Needs customerReference.'
+        cardId:
+          type: string
+          format: uuid
+          description: 'Payment mode: pay with this saved card. The page shows the card and the shopper confirms with 3-D Secure. Needs customerReference.'
         subscription:
           type: object
           required: [planId]
@@ -929,7 +1107,17 @@ components:
         refundedAmount: { type: number }
         lastPaymentError: { type: ['string', 'null'], description: Why the last attempt failed; the shopper may try again until the session expires }
         paymentAttempts: { type: integer, description: Failed attempts so far (5 locks the session) }
-        mode: { type: string, enum: [payment, subscription] }
+        mode: { type: string, enum: [payment, subscription, save_card] }
+        customerReference: { type: ['string', 'null'] }
+        saveCard: { type: boolean }
+        savedCard:
+          type: ['object', 'null']
+          description: Set once a card was saved by this session.
+          properties:
+            id: { type: string, format: uuid }
+            brand: { type: ['string', 'null'] }
+            last4: { type: ['string', 'null'] }
+        cardId: { type: ['string', 'null'], description: Sessions that pay with a saved card }
         subscription:
           type: ['object', 'null']
           properties:
@@ -939,6 +1127,71 @@ components:
             subscriptionId: { type: ['string', 'null'], description: Set once the sign-up is paid }
         invoiceId: { type: ['string', 'null'], description: 'Set when the session pays an invoice' }
         paymentLinkId: { type: ['string', 'null'], description: 'Set when the session pays a payment link' }
+    WalletCard:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        brand: { type: ['string', 'null'], example: Visa }
+        last4: { type: ['string', 'null'], example: '2701' }
+        expiryMonth: { type: ['integer', 'null'], example: 12 }
+        expiryYear: { type: ['integer', 'null'], example: 2031 }
+        nickname: { type: ['string', 'null'], example: Personal }
+        isDefault: { type: boolean }
+        status: { type: string, enum: [active, expired, removed] }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: ['string', 'null'], format: date-time }
+    WalletCustomer:
+      type: object
+      properties:
+        customerReference: { type: string, example: customer-1042 }
+        name: { type: ['string', 'null'], example: Jane Doe }
+        email: { type: ['string', 'null'], example: jane@example.com }
+        phone: { type: ['string', 'null'] }
+        createdAt: { type: string, format: date-time }
+        cards: { type: array, items: { $ref: '#/components/schemas/WalletCard' } }
+    UpsertWalletCustomer:
+      type: object
+      properties:
+        name: { type: string, maxLength: 200 }
+        email: { type: string, format: email, maxLength: 254 }
+        phone: { type: string, maxLength: 30 }
+    UpdateWalletCard:
+      type: object
+      description: Give a nickname, isDefault true, or both.
+      properties:
+        nickname: { type: string, maxLength: 50, description: An empty string clears it. }
+        isDefault: { type: boolean, const: true, description: Make this the default card. }
+    WalletPaymentRequest:
+      type: object
+      required: [amount, reference, returnUrl]
+      properties:
+        amount: { type: number, minimum: 0.01, maximum: 1000000, multipleOf: 0.01, example: 149.99 }
+        currency: { type: string, enum: [ZAR, NAD, BWP, LSL, SZL], default: ZAR }
+        reference: { type: string, maxLength: 64, example: '1043' }
+        description: { type: string, maxLength: 120 }
+        returnUrl: { type: string, maxLength: 1000, description: https URL or an app deep link. }
+        cancelUrl: { type: string, maxLength: 1000 }
+        metadata:
+          type: object
+          maxProperties: 20
+          additionalProperties: { type: string, maxLength: 500 }
+        expiresInMinutes: { type: integer, minimum: 5, maximum: 1440, default: 30 }
+    WalletPayment:
+      type: object
+      properties:
+        status: { type: string, const: requires_action, description: The shopper confirms on url. }
+        sessionId: { type: string, example: cs_7CRIaOqGBtDY1J7ARiDLS7 }
+        url: { type: string, description: WuloPay's page where the shopper confirms the payment }
+        expiresAt: { type: string, format: date-time }
+        amount: { type: number }
+        currency: { type: string }
+        reference: { type: string }
+        card:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            brand: { type: ['string', 'null'] }
+            last4: { type: ['string', 'null'] }
     CreatePlan:
       type: object
       required: [name, amount, interval]

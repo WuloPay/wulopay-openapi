@@ -59,6 +59,25 @@ GET  /Checkout/Sessions/{id}       -> status "paid"     <- shopper returns to re
 In the sandbox, `POST /Billing/Subscriptions/{id}/Advance` runs the next scheduled charge now, so you can test renewals
 without waiting; a plan of R60.00 declines every charge (start it with a free trial to see failures and retries).
 
+## Saved cards
+
+Name each shopper with your own `customerReference` (1 to 64 characters: letters, digits and `. _ : @ + -`). Keys need
+`wallet.read` and `wallet.write`, plus `checkout.sessions.create` to pay.
+
+1. Save a card on WuloPay's page: create a session with `mode: "save_card"` and `customerReference` (no amount; the bank
+   checks the card and nothing is charged), or a payment session with `saveCard: true` and `customerReference` (the
+   shopper may tick a box to save the card while paying). You get `card.saved`, and the session's `savedCard`.
+2. Show the shopper their cards: `GET /Wallet/Customers/{customerReference}/Cards` (brand, last 4 digits, expiry,
+   nickname, default). Rename or set the default with `PATCH .../Cards/{cardId}`, remove with `DELETE .../Cards/{cardId}`.
+3. Pay with a saved card: `POST /Wallet/Customers/{customerReference}/Cards/{cardId}/Payments` returns
+   `requires_action` and a `url`. Open it for the shopper: they see the card and confirm with 3-D Secure. Confirm the
+   payment from `checkout.session.completed`, as for any session.
+4. Keep cards current: `card.expiring` arrives 30 days before a card expires and `card.expired` after; saving the same
+   card again replaces the old one (`card.saved` lists it in `replaces`).
+
+Card numbers never reach your systems. `DELETE /Wallet/Customers/{customerReference}` removes a shopper and all their
+cards, for example on a privacy request.
+
 ## Webhook signatures
 
 Every webhook carries `WuloPay-Signature: t=<unix seconds>,v1=<hex>`. Compute HMAC-SHA256 of `"<t>.<raw body>"`
